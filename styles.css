@@ -1,0 +1,17 @@
+/* Add this to your CSS */
+@keyframes shake {
+    0% { transform: translateX(0); }
+    25% { transform: translateX(5px); }
+    75% { transform: translateX(-5px); }
+    100% { transform: translateX(0); }
+}
+
+.score-penalty {
+    position: absolute;
+    color: red;
+    font-size: 28px;
+    animation: shake 0.3s ease-in-out;
+    pointer-events: none;
+}
+
+
