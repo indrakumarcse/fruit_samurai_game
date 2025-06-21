@@ -4,8 +4,30 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 // sword cursor
 const style = document.createElement('style');
 style.textContent = `
-    body, canvas.webgl {
+    html, body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden !important;
         cursor: none !important;
+    }
+    
+    canvas.webgl {
+        display: block;
+        width: 100%;
+        height: 100%;
+        position: fixed;
+        top: 0;
+        left: 0;
+        cursor: none !important;
+    }
+    
+    #loadingScreen {
+        cursor: auto !important;
+        width: 100%;
+        height: 100%;
+        overflow: hidden !important;
     }
     
     .custom-cursor {
@@ -25,11 +47,76 @@ style.textContent = `
 `;
 document.head.appendChild(style);
 
-
 // Cannon.js Physics World Setup
 const world = new CANNON.World();
 world.gravity.set(0, -9.8, 0); 
 world.solver.iterations = 10;
+
+
+// Scene setup
+const scene = new THREE.Scene();
+const canvas = document.querySelector('canvas.webgl');
+
+// Camera setup
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+camera.position.set(0, 0, 18);
+camera.lookAt(0, 0, 0);
+
+
+const loadingManager = new THREE.LoadingManager();
+let loaded = false;
+let loadStartTime = Date.now();
+
+
+const listener = new THREE.AudioListener();
+camera.add(listener);
+let sliceSounds = [];
+let sliceSound;
+let currentSoundIndex = 0;
+const AUDIO_POOL_SIZE = 5;
+
+let bombSound;
+let lastHoveredBomb = null;
+const BOMB_AUDIO_POOL_SIZE = 3;
+let bombSounds = [];
+let currentBombSoundIndex = 0;
+
+let welcomeBuffer;
+let gameOverBuffer;
+
+
+// Add this after creating loadingManager
+const audioLoader = new THREE.AudioLoader(loadingManager);
+audioLoader.load('public/slicing_sound.mp3', (buffer) => {
+
+    for (let i = 0; i < AUDIO_POOL_SIZE; i++) {
+        const audio = new THREE.Audio(listener);
+        audio.setBuffer(buffer);
+        audio.setVolume(0.3);
+        sliceSounds.push(audio);
+    }
+});
+
+
+audioLoader.load('public/bomb1.mp3', (buffer) => {
+    for (let i = 0; i < BOMB_AUDIO_POOL_SIZE; i++) {
+        const sound = new THREE.Audio(listener);
+        sound.setBuffer(buffer);
+        sound.setVolume(0.5);
+        sound.setLoop(false);
+        bombSounds.push(sound);
+    }
+});
+
+
+audioLoader.load('public/welcome1.mp3', (buffer) => {
+    welcomeBuffer = buffer;
+});
+
+audioLoader.load('public/gameover.wav', (buffer) => {
+    gameOverBuffer = buffer;
+});
+
 
 
 // loading screen
@@ -62,54 +149,18 @@ function createLoadingScreen() {
         justify-content: center;
     `;
 
-    // Rotating fruits container
-    const orbitContainer = document.createElement('div');
-    orbitContainer.className = 'orbit-container';
-    orbitContainer.style.cssText = `
-        position: fixed;
-        width: 400px;
-        height: 400px;
-        animation: rotate 15s linear infinite;
-        top: 45%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        pointer-events: none;
-    `;
-
     // Gamepic image at center
     const logoImg = document.createElement('img');
-    logoImg.src = 'gamepic4.webp';
+    logoImg.src = 'public/gamepic4.webp';
     logoImg.style.cssText = `
         width: 150px;
         position: absolute;
         top: 40%;
-        left: 48%;
+        left: 50%;
         transform: translate(-50%, -50%);
         z-index: 2;
         filter: drop-shadow(0 0 8px rgba(255,255,255,0.5));
     `;
-
-    // Fruits arranged in a circle around the image
-    const fruits = ['🍎', '🍊', '🍋', '🍇', '🍓', '🍌', '🍉', '🍑'];
-    fruits.forEach((fruit, index) => {
-        const angle = (360 / fruits.length) * index;
-        const fruitEl = document.createElement('div');
-        fruitEl.style.cssText = `
-            position: absolute;
-            font-size: 50px;
-            filter: drop-shadow(0 0 12px rgba(255,255,255,0.7));
-            opacity: 1;
-            left: 46%;
-            top: 50%;
-            transform: 
-                rotate(${angle}deg) 
-                translateX(250px) 
-                rotate(-${angle}deg);
-            will-change: transform;
-        `;
-        fruitEl.textContent = fruit;
-        orbitContainer.appendChild(fruitEl);
-    });
 
     // Progress elements
     const progressContainer = document.createElement('div');
@@ -150,33 +201,46 @@ function createLoadingScreen() {
         text-shadow: 0 2px 4px rgba(0,0,0,0.5);
     `;
 
-    // Add animations
-    const style = document.createElement('style');
-    style.textContent = `
-        @keyframes rotate {
-            from { 
-                transform: translate(-50%, -50%) rotate(0deg); 
-            }
-            to { 
-                transform: translate(-50%, -50%) rotate(360deg); 
-            }
-        }
-        
-        .orbit-container div {
-            transform-origin: center center;
-        }
+    const startButton = document.createElement('button');
+    startButton.id = 'startButton';
+    startButton.textContent = 'Start Game';
+    startButton.style.cssText = `
+        padding: 15px 40px;
+        font-size: 1.5em;
+        background: #00ff88;
+        border: none;
+        border-radius: 50px;
+        color: white;
+        cursor: pointer;
+        margin-top: 350px;
     `;
+    startButton.addEventListener('click', () => {
+        listener.context.resume().then(() => {
+            hideLoadingScreen();
+            initGame();
+            if (welcomeBuffer) {
+                const welcomeSound = new THREE.Audio(listener);
+                welcomeSound.setBuffer(welcomeBuffer);
+                welcomeSound.setVolume(0.5);
+                welcomeSound.play();
+            }
+            const welcomeDiv = document.createElement('div');
+            welcomeDiv.className = 'welcome-message';
+            welcomeDiv.innerHTML = 'FRUIT SAMURAI<div class="welcome-subtext">READY TO PLAY</div>';
+            document.body.appendChild(welcomeDiv);
+            setTimeout(() => welcomeDiv.remove(), 2500);
+        });
+    });
+    loadingContainer.appendChild(startButton);
 
     // Assemble elements
     progressBar.appendChild(progressFill);
     progressContainer.appendChild(progressBar);
     progressContainer.appendChild(progressText);
-    loadingContainer.appendChild(orbitContainer);
     loadingContainer.appendChild(logoImg);
     loadingContainer.appendChild(progressContainer);
     loadingDiv.appendChild(loadingContainer);
     document.body.appendChild(loadingDiv);
-    document.head.appendChild(style);
 }
 
 
@@ -206,11 +270,8 @@ welcomeStyle.textContent = `
         transform: translate(-50%, -50%);
         font-size: 4.5em;
         font-family: 'Arial Black', sans-serif;
-        color: #ffffff;
-        text-shadow: 0 0 20px rgba(0,255,136,0.8),
-                     0 0 30px rgba(0,204,255,0.8),
-                     0 0 40px rgba(255,255,255,0.5);
-        animation: welcomePulse 2s ease-out forwards;
+        color: #ffd700; /* Gold */
+        animation: welcomePulse 2.5s ease-out forwards;
         z-index: 9999;
         opacity: 0;
         pointer-events: none;
@@ -219,61 +280,39 @@ welcomeStyle.textContent = `
     }
 
     @keyframes welcomePulse {
-        0% { opacity: 0; transform: translate(-50%, -50%) scale(0.8); }
-        20% { opacity: 1; transform: translate(-50%, -50%) scale(1.1); }
-        40% { transform: translate(-50%, -50%) scale(1); }
-        80% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
-        100% { opacity: 0; transform: translate(-50%, -50%) scale(1.2); }
+        0% { opacity: 0; transform: translate(-50%, -50%) scale(0.9); }
+        30% { opacity: 1; transform: translate(-50%, -50%) scale(1.05); }
+        70% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+        100% { opacity: 0; transform: translate(-50%, -50%) scale(1.1); }
     }
 
     .welcome-subtext {
         font-size: 0.4em;
         display: block;
         margin-top: 10px;
-        color: #00ff88;
-        text-shadow: 0 0 10px rgba(0,255,136,0.5);
+        color: #ffffff; /* White */
     }
 `;
 document.head.appendChild(welcomeStyle);
 
-
 // Modified Loading Manager setup
-const loadingManager = new THREE.LoadingManager();
-let loaded = false;
-let loadStartTime = Date.now();
+
 
 loadingManager.onLoad = () => {
-    const loadTime = Date.now() - loadStartTime;
-    const remainingTime = Math.max(0, 2500 - loadTime);
-
-    setTimeout(() => {
-        if (!loaded) {
-            loaded = true;
-            hideLoadingScreen();
-            initGame(); 
-
-            // Create welcome message
-            const welcomeDiv = document.createElement('div');
-            welcomeDiv.className = 'welcome-message';
-            welcomeDiv.innerHTML = 'FRUIT SLICER<div class="welcome-subtext">READY TO PLAY</div>';
-            document.body.appendChild(welcomeDiv);
-
-            // Play welcome sound after 1 second
-            setTimeout(() => {
-                if (welcomeBuffer) {
-                    const welcomeSound = new THREE.Audio(listener);
-                    welcomeSound.setBuffer(welcomeBuffer);
-                    welcomeSound.setVolume(0.5);
-                    welcomeSound.play();
-                }
-            }, 800);
-
-            // Remove message after animation
-            setTimeout(() => {
-                welcomeDiv.remove();
-            }, 2500);
-        }
-    }, remainingTime);
+    updateLoadingProgress(100);
+    const startButton = document.getElementById('startButton'); // Reference the button added in createLoadingScreen
+    if (startButton) {
+        startButton.style.animation = 'pulse 1s infinite';
+        const style = document.createElement('style');
+        style.textContent = `
+            @keyframes pulse {
+                0% { transform: scale(1); }
+                50% { transform: scale(1.1); }
+                100% { transform: scale(1); }
+            }
+        `;
+        document.head.appendChild(style);
+    }
 };
 
 loadingManager.onProgress = (url, itemsLoaded, itemsTotal) => {
@@ -283,63 +322,8 @@ loadingManager.onProgress = (url, itemsLoaded, itemsTotal) => {
 
 loadStartTime = Date.now();
 
-// Scene setup
-const scene = new THREE.Scene();
-const canvas = document.querySelector('canvas.webgl');
-
-// Camera setup
-const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
-camera.position.set(0, 0, 18);
-camera.lookAt(0, 0, 0);
-
-const listener = new THREE.AudioListener();
-camera.add(listener);
-let sliceSounds = [];
-let sliceSound;
-let currentSoundIndex = 0;
-const AUDIO_POOL_SIZE = 5;
-
-let bombSound;
-let lastHoveredBomb = null;
-const BOMB_AUDIO_POOL_SIZE = 3;
-let bombSounds = [];
-let currentBombSoundIndex = 0;
-
-let welcomeBuffer;
-let gameOverBuffer;
 
 
-// Add this after creating loadingManager
-const audioLoader = new THREE.AudioLoader(loadingManager);
-audioLoader.load('slicing_sound.mp3', (buffer) => {
-
-    for (let i = 0; i < AUDIO_POOL_SIZE; i++) {
-        const audio = new THREE.Audio(listener);
-        audio.setBuffer(buffer);
-        audio.setVolume(0.3);
-        sliceSounds.push(audio);
-    }
-});
-
-
-audioLoader.load('bomb1.mp3', (buffer) => {
-    for (let i = 0; i < BOMB_AUDIO_POOL_SIZE; i++) {
-        const sound = new THREE.Audio(listener);
-        sound.setBuffer(buffer);
-        sound.setVolume(0.5);
-        sound.setLoop(false);
-        bombSounds.push(sound);
-    }
-});
-
-
-audioLoader.load('welcome1.mp3', (buffer) => {
-    welcomeBuffer = buffer;
-});
-
-audioLoader.load('gameover.wav', (buffer) => {
-    gameOverBuffer = buffer;
-});
 
 
 // hearts
@@ -361,7 +345,7 @@ gameStyle.textContent = `
     .life-icon {
         width: 40px;
         height: 40px;
-        background: url('heart.png') center/contain no-repeat;
+        background: url('public/heart.png') center/contain no-repeat;
         filter: drop-shadow(0 0 5px rgba(255,50,50,0.8));
         transition: transform 0.2s;
     }
@@ -469,7 +453,7 @@ renderer.shadowMap.enabled = true;
 
 // Texture loader and environment
 const textureLoader = new THREE.TextureLoader(loadingManager);
-const skyTexture = textureLoader.load('sky-envmap.jpg');
+const skyTexture = textureLoader.load('public/sky-envmap.jpg');
 skyTexture.mapping = THREE.EquirectangularReflectionMapping;
 scene.background = skyTexture;
 scene.environment = skyTexture;
@@ -492,7 +476,7 @@ scoreElement.style.fontSize = '24px';
 document.body.appendChild(scoreElement);
 
 // Vertical background plane
-const planeTexture = textureLoader.load('background.jpeg');
+const planeTexture = textureLoader.load('public/background.jpeg');
 planeTexture.colorSpace = THREE.SRGBColorSpace;
 
 const plane = new THREE.Mesh(
@@ -587,7 +571,7 @@ fruitTypes.forEach(type => {
     });
 
     // Load sliced model
-    gltfLoader.load(`fruits/sliced/sliced_${type}.glb`, (gltf) => {
+    gltfLoader.load(`sliced/sliced_${type}.glb`, (gltf) => {
         const model = gltf.scene;
         model.scale.set(scaleFactors[type].sliced, scaleFactors[type].sliced, scaleFactors[type].sliced);
         model.traverse(child => {
@@ -831,24 +815,16 @@ function initGame() {
     }, 10000);
 }
 
-
 function setupInput() {
-
-
     const cursor = document.createElement('img');
     cursor.className = 'custom-cursor';
-    cursor.src = 'sword_cursor2.png';
+    cursor.src = 'public/sword_cursor2.png';
     document.body.appendChild(cursor);
 
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
-    let lastIntersection = null;
-    const slashPoints = [];
-    const slashLine = createSlashLine();
-    scene.add(slashLine);
 
     function onPointerMove(event) {
-
         const x = event.clientX || event.touches?.[0]?.clientX;
         const y = event.clientY || event.touches?.[0]?.clientY;
         if (x && y) {
@@ -856,38 +832,22 @@ function setupInput() {
             cursor.style.top = `${y}px`;
         }
 
-        // Add slicing animation
         cursor.classList.add('cursor-slice');
         setTimeout(() => cursor.classList.remove('cursor-slice'), 100);
 
         pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
         pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
 
-        // Update slash visualization
-        raycaster.setFromCamera(pointer, camera);
-        const intersects = raycaster.intersectObject(plane);
-        
-        if (intersects.length > 0) {
-            slashPoints.push(intersects[0].point.clone());
-            if (slashPoints.length > 10) slashPoints.shift();
-            updateSlashLine(slashPoints, slashLine);
-        }
-
-        // Continuous slicing check
         checkIntersection();
 
         document.addEventListener('click', () => {
-            if (sliceSound && sliceSound.context.state === 'suspended') {
-                sliceSound.context.resume();
-            }
+            if (listener.context.state === 'suspended') listener.context.resume();
+        }, { once: true });
 
-            const context = listener.context;
-            if (context.state === 'suspended') {
-                context.resume();
-            }
-        });
+        document.addEventListener('touchstart', () => {
+            if (listener.context.state === 'suspended') listener.context.resume();
+        }, { once: true });
     }
-
 
     function checkIntersection() {
         if (isGameOver) return;
@@ -898,13 +858,11 @@ function setupInput() {
         const planeIntersects = raycaster.intersectObject(plane);
         if (planeIntersects.length === 0) return;
         const cursorWorldPos = planeIntersects[0].point;
-        const hitRadius = 2.5;
+        const hitRadius = 3.5;
     
-        // Check all fruits for proximity using 2D distance
         fruits.forEach(fruit => {
             if (fruit.isSliced) return;
     
-            // Calculate 2D distance (ignore Z-axis)
             const dx = cursorWorldPos.x - fruit.body.position.x;
             const dy = cursorWorldPos.y - fruit.body.position.y;
             const distance = Math.sqrt(dx * dx + dy * dy);
@@ -912,7 +870,6 @@ function setupInput() {
             const effectiveRadius = fruit.type === 'bomb' ? 2 : 1.5;
     
             if (distance < hitRadius + effectiveRadius) {
-                // Visual feedback and slicing logic
                 fruit.mesh.traverse(child => {
                     if (child.isMesh && child.material) {
                         child.material.emissive?.setHex(0xff0000);
@@ -941,7 +898,6 @@ function setupInput() {
             sound.play();
             currentBombSoundIndex = (currentBombSoundIndex + 1) % BOMB_AUDIO_POOL_SIZE;
     
-            // Deduct life only if it's a new bomb hover
             if (currentBomb !== lastHoveredBomb) {
                 lives = Math.max(0, lives - 1);
                 updateLives();
@@ -972,33 +928,15 @@ function setupInput() {
         lastHoveredBomb = currentBomb;
     }
 
-    function createSlashLine() {
-        const lineGeometry = new THREE.BufferGeometry();
-        const lineMaterial = new THREE.LineBasicMaterial({ 
-            color: 0xff0000,
-            transparent: true,
-            opacity: 0.7
-        });
-        return new THREE.Line(lineGeometry, lineMaterial);
-    }
-
-    function updateSlashLine(points, line) {
-        if (points.length < 2) return;
-        const positions = new Float32Array(points.length * 3);
-        points.forEach((point, i) => {
-            positions[i*3] = point.x;
-            positions[i*3+1] = point.y;
-            positions[i*3+2] = point.z;
-        });
-        line.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-        line.geometry.attributes.position.needsUpdate = true;
-    }
-
-    // Event listeners
     window.addEventListener('mousemove', onPointerMove);
     window.addEventListener('touchmove', e => {
         e.preventDefault();
         onPointerMove(e.touches[0]);
+    });
+    window.addEventListener('mousedown', checkIntersection);
+    window.addEventListener('touchstart', e => {
+        e.preventDefault();
+        checkIntersection();
     });
 }
 
